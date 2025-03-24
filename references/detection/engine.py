@@ -29,6 +29,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq, sc
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
         with torch.cuda.amp.autocast(enabled=scaler is not None):
             loss_dict = model(images, targets)
+
             losses = sum(loss for loss in loss_dict.values())
 
         # reduce losses over all GPUs for logging purposes
@@ -36,7 +37,6 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq, sc
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
 
         loss_value = losses_reduced.item()
-
         if not math.isfinite(loss_value):
             print(f"Loss is {loss_value}, stopping training")
             print(loss_dict_reduced)
@@ -72,8 +72,33 @@ def _get_iou_types(model):
     return iou_types
 
 
+def evaluate(model, data_loader, device, scaler=None):
+  # We'll compute a simple validation loss over the test dataset.
+  total_loss = 0.0
+  count = 0
+  with torch.no_grad():
+    for images, targets in data_loader:
+      images = list(image.to(device) for image in images)
+      targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
+      with torch.cuda.amp.autocast(enabled=scaler is not None):
+          loss_dict = model(images, targets)
+      #print(f"loss_dict type: {type(loss_dict)}")
+      #print(f"loss_dict content: {loss_dict}")
+
+      # reduce losses over all GPUs for logging purposes
+      loss_dict_reduced = utils.reduce_dict(loss_dict)
+      losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+      loss_value = losses_reduced.item()
+      print(f"Loss value: {loss_value:.4f}")
+      total_loss += loss_value
+      count += 1
+  avg_val_loss = total_loss / count if count > 0 else float('nan')
+  print(f"Validation Loss: {avg_val_loss:.4f}")
+  return avg_val_loss
+
+
 @torch.inference_mode()
-def evaluate(model, data_loader, device):
+def coco_evaluate(model, data_loader, device):
     n_threads = torch.get_num_threads()
     # FIXME remove this and make paste_masks_in_image run on the GPU
     torch.set_num_threads(1)
@@ -113,3 +138,4 @@ def evaluate(model, data_loader, device):
     coco_evaluator.summarize()
     torch.set_num_threads(n_threads)
     return coco_evaluator
+
